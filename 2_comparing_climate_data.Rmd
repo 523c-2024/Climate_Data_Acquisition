@@ -3,6 +3,9 @@ title: "2 comparing climate data"
 author: "Matthew Ross"
 date: "2024-04-17"
 output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
 ---
 
 ```{r setup, include=FALSE}
@@ -20,19 +23,19 @@ if(!file.exists(gldas_dir)){
 }
 ```
 
-
 # Assignment
 
+For this assignment we are going to compare climate data from a single
+point versus a watershed averaged climate data. We will be working over
+the Yampa river watershed, one of the last undammed watersheds in the
+USA.
 
-For this assignment we are going to compare climate data from a single point 
-versus a watershed averaged climate data. We will be working over the Yampa river
-watershed, one of the last undammed watersheds in the USA. 
+## Point-climate acquisition.
 
-## Point-climate acquisition. 
-
-Using the 1_climate_data_yojoa.Rmd as an example download at least two types of climate (wind/temp/etc...) GLDAS data for the
-Yampa River above Elkhead Creek. This is the site of a USGS gage that has data
-dating back to 2004. 
+Using the 1_climate_data_yojoa.Rmd as an example download at least two
+types of climate (wind/temp/etc...) GLDAS data for the Yampa River above
+Elkhead Creek. This is the site of a USGS gage that has data dating back
+to 2004.
 
 ```{r}
 site_info <- tibble(site_no = '09244490',
@@ -41,19 +44,157 @@ site_info <- tibble(site_no = '09244490',
                     name = 'Yampa_hayden')
 ```
 
+```{r}
+#set parameters of function - these are found on the data rods website linked above
+gldas_mod = c('GLDAS_NOAH025_3H_v2.1')
+params = c('Tair_f_inst', 'Rainf_f_tavg')
 
+#time period of interest - v 2.0 and v 2.1 have different time periods of coverage, and to keep the download from hanging, you have to have separate start/end dates
+start_date_2.1 = '2004-01-01'
+end_date_2.1 = '2023-01-01'
+
+#GLDAS data are in 0.25 degree increments, of which Yojoa intersects with a few kernels, the following degrees would prioritize the kernel over the most water area of Yojoa
+lat = 40.5180278
+lon = -107.3997838
+
+#function to make wwws to ping
+make_www_2.1 = function(model, var){#, s_d, e_d, lat, lon) {
+  s_d = start_date_2.1
+  e_d = end_date_2.1
+  paste0('https://hydro1.gesdisc.eosdis.nasa.gov/daac-bin/access/timeseries.cgi?variable=GLDAS2:', model, ':', var, '&startDate=', s_d, 'T00:00&endDate=', e_d, 'T21:00&location=GEOM:POINT(', lon, ',%20', lat, ')&type=asc2')
+}
+
+#make a list of all wwws for download
+v2.1_www = unlist(map2(rep(gldas_mod[1], times = length(params)), params, make_www_2.1))
+```
+
+# Download all GLDAS data
+
+```{r, eval = F}
+
+for(w21 in 1:length(v2.1_www)) {
+  download.file(url = v2.1_www[w21], destfile = file.path(gldas_dir, paste0(rep(gldas_mod[1], length(params))[w21], '_', params[w21], '.csv')))
+}
+```
+
+## Load GLDAS data
+
+Let's load the GLDAS data and collate them all together
+
+```{r}
+#make list of files fo GLDAS data
+files = list.files(gldas_dir)
+
+
+formatGLDAS = function(file = files[1]){
+  f = read.delim(file.path(gldas_dir, file), skip = 12, sep = '\t')
+  colnames(f) = 'data'
+  f = f %>%
+    rownames_to_column('datetime') %>% 
+    mutate(data = as.character(data),
+           datetime = as.character(datetime),
+           parameter = unlist(str_split(file, pattern = '_'))[5],
+           version = unlist(str_split(file, pattern = '_'))[4])
+  return(f)
+}
+
+
+all_gldas = map_dfr(files, formatGLDAS) %>% 
+  mutate(datetime_gmt = as.POSIXct(datetime, tz = 'Etc/GMT+0'),
+         data = as.numeric(data)) %>%
+  arrange(datetime_gmt)
+
+View(all_gldas)
+#plot for reality check
+ggplot(all_gldas %>%
+         sample_frac(0.05), aes(x = datetime_gmt, y = data)) +
+  geom_point() +
+  facet_grid(parameter ~ ., scales = 'free_y') +
+  theme_bw()
+
+```
+
+## Re-orient the dataset to horizontal
+
+First, aggregate overlap of data to mean and pivot to horizontal.
+
+```{r}
+all_gldas_h = all_gldas %>% 
+  group_by(datetime, parameter) %>% 
+  summarise(aggrate_data = mean(data)) %>% 
+  pivot_wider(names_from = c('parameter'),
+              values_from = 'aggrate_data')
+```
+
+## Summarize data in 5 and 7 days previous
+
+First, correct the time to be local and aggregate to daily
+
+```{r}
+all_gldas_h$datetime_gmt = as.POSIXct(all_gldas_h$datetime, 
+                                      tz = 'Etc/GMT+0')#all GLDAS is in GMT
+
+all_gldas_h$datetime_local = with_tz(all_gldas_h$datetime_gmt,
+                                     tz = 'Etc/GMT+6') #NOTE TZ IS INTENTIONALLY INVERTED
+
+all_gldas_h$date = as.Date(all_gldas_h$datetime_local)
+
+#summarize to daily data
+gldas_daily = all_gldas_h %>% 
+  group_by(date) %>% 
+  summarise(max_temp = max(Tair),
+            min_temp = min(Tair),
+            precip = sum(Rainf)) %>% 
+  rowid_to_column() %>% 
+  filter(date >= as.Date('1980-01-01')) %>% 
+  arrange(date)
+
+```
+
+Rolling average for 7 day window prior to date
+
+```{r}
+sevenday = as.data.frame(gldas_daily$date[7:nrow(gldas_daily)])
+colnames(sevenday) = 'date'
+sevenday$max_temp_7 = roll_max(x  = gldas_daily$max_temp, align = 'right', 7)
+sevenday$min_temp_7 = roll_min(x  = gldas_daily$min_temp, align = 'right', 7)
+sevenday$precip_7 = roll_sum(x  = gldas_daily$precip, align = 'right', 7)
+
+```
+
+Rolling average for 5 day window prior to date
+
+```{r}
+fiveday = as.data.frame(gldas_daily$date[5:nrow(gldas_daily)])
+colnames(fiveday) = 'date'
+fiveday$max_temp_5 = roll_max(x  = gldas_daily$max_temp, align = 'right', 5)
+fiveday$min_temp_5 = roll_min(x  = gldas_daily$min_temp, align = 'right', 5)
+fiveday$precip_5 = roll_sum(x  = gldas_daily$precip, align = 'right', 5)
+```
+
+```{r}
+ggplot(fiveday, aes(x = max_temp_5,
+                    y = precip_5)) + 
+  geom_point()
+
+
+ggplot(fiveday, aes(x = min_temp_5,
+                    y = precip_5)) + 
+  geom_point()
+
+
+
+
+```
 
 ## Watershed averaged climate data
 
-Using climate engine, download the two same parameters but for the watershed.
-The watershed is stored as a .geojson in the yampa folder. Note, you likely need
-to convert the watershed to a ".shp" file before getting the data from climate 
-engine. 
-
+Using climate engine, download the two same parameters but for the
+watershed. The watershed is stored as a .geojson in the yampa folder.
+Note, you likely need to convert the watershed to a ".shp" file before
+getting the data from climate engine.
 
 ## Compare your climate data anyway you want
 
-Make at least two plots comparing your point versus watershed-averaged climate data. 
-
-
-
+Make at least two plots comparing your point versus watershed-averaged
+climate data.
