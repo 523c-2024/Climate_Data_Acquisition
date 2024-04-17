@@ -38,7 +38,108 @@ dating back to 2004.
 site_info <- tibble(site_no = '09244490',
                     lat = 40.5180278,
                     long = -107.3997838,
-                    name = 'Yampa_hayden')
+                    name = 'Yampa_hayden', 
+                    model = 'GLDAS_NOAH025_3H_v2.1', 
+                    params = c('Tair_f_inst', 'Rainf_f_tavg'), 
+                    start_date = '2000-01-01',
+                    end_date = '2023-12-31')
+
+
+
+make_www_2.1 = function(lat, long, model, start_date,end_date, param){
+  #, s_d, e_d, lat, lon) {
+
+  paste0('https://hydro1.gesdisc.eosdis.nasa.gov/daac-bin/access/timeseries.cgi?variable=GLDAS2:', model, ':', param, '&startDate=', start_date, 'T00:00&endDate=', end_date, 'T21:00&location=GEOM:POINT(', long, ',%20', lat, ')&type=asc2')
+}
+
+
+# Map over the params
+v2.1_www <- unlist(map(site_info$params, ~make_www_2.1(lat = site_info$lat,
+                                            long = site_info$long,
+                                            model = site_info$model,
+                                            start_date = site_info$start_date,
+                                            end_date = site_info$end_date,
+                                            param = .x)))%>%
+  unique()
+for(w21 in 1:length(v2.1_www)) {
+  download.file(url = v2.1_www[w21], destfile = file.path(gldas_dir, paste0(rep(gldas_mod[2], length(params))[w21], '_', params[w21], '.csv')))
+}
+
+
+```
+
+## Tidy up the data
+
+```{r}
+#make list of files fo GLDAS data
+files = list.files(gldas_dir)
+
+
+formatGLDAS = function(file = files[1]){
+  f = read.delim(file.path(gldas_dir, file), skip = 12, sep = '\t')
+  colnames(f) = 'data'
+  f = f %>%
+    rownames_to_column('datetime') %>% 
+    mutate(value = as.character(data),
+           datetime = as.character(datetime),
+           parameter = unlist(str_split(file, pattern = '_'))[5],
+           version = unlist(str_split(file, pattern = '_'))[4])
+  return(f)
+}
+
+
+all_gldas <- map_dfr(files, formatGLDAS) %>% 
+  mutate(value = as.numeric(value)) %>%
+  #PIVOT!
+  group_by(datetime, parameter) %>% 
+  summarise(aggrate_data = mean(value)) %>% 
+  pivot_wider(names_from = c('parameter'),
+              values_from = 'aggrate_data')%>%
+  #Correct TZ
+  mutate(datetime_gmt = as.POSIXct(datetime,tz = 'Etc/GMT+0'), 
+         datetime_local = with_tz(datetime_gmt,tz = 'Etc/GMT+6'), 
+         date = as.Date(datetime_local))
+  
+
+#summarize to daily 
+gldas_daily <- all_gldas %>% 
+  group_by(date) %>% 
+  summarise(max_temp = max(Tair),
+            min_temp = min(Tair),
+            med_temp = median(Tair),
+            precip = sum(Rainf)) %>% 
+  rowid_to_column() %>% 
+  filter(date >= as.Date('2004-01-01')) %>% 
+  arrange(date)
+
+```
+
+## Summarize and get rolling averages
+
+```{r}
+sevenday <- tibble(date = gldas_daily$date[7:nrow(gldas_daily)])%>%
+  mutate(max_temp_7 = roll_max(x  = gldas_daily$max_temp, align = 'right', 7),
+min_temp_7 = roll_min(x  = gldas_daily$min_temp, align = 'right', 7),
+med_temp_7 = roll_mean(x  = gldas_daily$med_temp, align = 'right', 7),
+precip_7 = roll_sum(x  = gldas_daily$precip, align = 'right', 7))
+
+fiveday <- tibble(date = gldas_daily$date[5:nrow(gldas_daily)])%>%
+  mutate(max_temp_5 = roll_max(x  = gldas_daily$max_temp, align = 'right', 5),
+min_temp_5 = roll_min(x  = gldas_daily$min_temp, align = 'right', 5),
+med_temp_5 = roll_mean(x  = gldas_daily$med_temp, align = 'right', 5),
+precip_5 = roll_sum(x  = gldas_daily$precip, align = 'right', 5))
+
+
+gldas_summary <- inner_join(sevenday, fiveday, by = 'date')%>%
+  left_join(select(gldas_daily, -rowid), by = 'date')
+
+
+ggplot(filter(gldas_summary,precip != 0), aes(x = min_temp,
+                    y = precip)) + 
+  geom_point()
+
+
+write.csv(gldas_summary, file.path(gldas_dir, 'GLDAS_summaries.csv'), row.names = F)
 ```
 
 
@@ -51,9 +152,26 @@ to convert the watershed to a ".shp" file before getting the data from climate
 engine. 
 
 
+```{r}
+
+# read in the yampa geojson and convert to shp file using sf
+library(sf)
+yampa <- st_read('data/yampa/yampa.geojson')%>%
+  filter(id == "globalwatershed")
+st_write(yampa, 'data/yampa/yampa.shp')
+
+```
+
+
+
 ## Compare your climate data anyway you want
 
 Make at least two plots comparing your point versus watershed-averaged climate data. 
+
+```{r}
+print("C'est pas possible....")
+```
+
 
 
 
