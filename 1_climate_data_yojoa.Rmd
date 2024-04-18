@@ -7,15 +7,11 @@ output: html_document
 
 # Climate data
 
-A key part of many environmental prediction and analysis pipelines is using
-climate data to drive predictions. The purpose of this workflow is to make this 
-as easy as possible. 
+A key part of many environmental prediction and analysis pipelines is using climate data to drive predictions. The purpose of this workflow is to make this as easy as possible.
 
 ## GLDAS
 
-Most of this code comes from [B Steele](https://github.com/rossyndicate/ROSS_RS_mini_tools/blob/main/LDAS_data_rods/Download_Summarize_GLDAS.Rmd). 
-
-
+Most of this code comes from [B Steele](https://github.com/rossyndicate/ROSS_RS_mini_tools/blob/main/LDAS_data_rods/Download_Summarize_GLDAS.Rmd).
 
 ```{r}
 
@@ -30,7 +26,6 @@ if(!file.exists(gldas_dir)){
   dir.create(gldas_dir)
 }
 ```
-
 
 # Purpose
 
@@ -48,7 +43,7 @@ Beaudoing, H. and M. Rodell, NASA/GSFC/HSL (2019), GLDAS Noah Land Surface Model
 
 Beaudoing, H. and M. Rodell, NASA/GSFC/HSL (2020), GLDAS Noah Land Surface Model L4 3 hourly 0.25 x 0.25 degree V2.1, Greenbelt, Maryland, USA, Goddard Earth Sciences Data and Information Services Center (GES DISC), Accessed: **[*Data Access Date*]**, [10.5067/E7TYRXPJKWOQ](https://doi.org/10.5067/E7TYRXPJKWOQ)
 
-Rodell, M., P.R. Houser, U. Jambor, J. Gottschalck, K. Mitchell, C. Meng, K. Arsenault, B. Cosgrove, J. Radakovich, M. Bosilovich, J.K. Entin, J.P. Walker, D. Lohmann, and D. Toll, 2004: The Global Land Data Assimilation System, Bull. Amer. Meteor. Soc., 85, 381-394, doi:[10.1175/BAMS-85-3-381](https://doi.org/10.1175/BAMS-85-3-381)
+Rodell, M., P.R. Houser, U. Jambor, J. Gottschalck, K. Mitchell, C. Meng, K. Arsenault, B. Cosgrove, J. Radakovich, M. Bosilovich, J.K. Entin, J.P. Walker, D. Lohmann, and D. Toll, 2004: The Global Land Data Assimilation System, Bull. Amer. Meteor. Soc., 85, 381-394, [doi:[10.1175/BAMS-85-3-381](doi:%5B10.1175/BAMS-85-3-381){.uri}](<https://doi.org/10.1175/BAMS-85-3-381>)
 
 # Define GLDAS dataset(s), variables, and timeframe
 
@@ -56,15 +51,14 @@ Here we will pull the following variables from GLDAS Noah Land Surface Model L4 
 
 | GLDAS Parameter | Definition                        | Units     |
 |-----------------|-----------------------------------|-----------|
-| Wind_f\_inst    | Near surface wind speed           | m/s       |
-| Tair_f\_inst    | Near surface air temperature      | K         |
-| Rainf_f\_tavg   | Total precipitation rate          | kg/m^2^/s |
-| SWdown_f\_tavg  | Downward shortwave radiation flux | W m-2     |
+| Wind_f_inst     | Near surface wind speed           | m/s       |
+| Tair_f_inst     | Near surface air temperature      | K         |
+| Rainf_f_tavg    | Total precipitation rate          | kg/m^2^/s |
+| SWdown_f_tavg   | Downward shortwave radiation flux | W m-2     |
 
 Both v 2.0 and 2.1 have different temporal extents:
 
-GLDAS-2.0: January 1, 1948 -- December 31, 2014
-GLDAS-2.1: January 1, 2000 -- Present
+GLDAS-2.0: January 1, 1948 -- December 31, 2014 GLDAS-2.1: January 1, 2000 -- Present
 
 ```{r}
 #set parameters of function - these are found on the data rods website linked above
@@ -148,7 +142,7 @@ ggplot(all_gldas %>%
 
 ```
 
-## Re-orient the dataset to horizontal 
+## Re-orient the dataset to horizontal
 
 First, aggregate overlap of data to mean and pivot to horizontal.
 
@@ -165,8 +159,7 @@ all_gldas_h = all_gldas %>%
 First, correct the time to be local and aggregate to daily
 
 ```{r}
-all_gldas_h$datetime_gmt = as.POSIXct(all_gldas_h$datetime, 
-                                      tz = 'Etc/GMT+0')#all GLDAS is in GMT
+all_gldas_h$datetime_gmt = as.POSIXct(all_gldas_h$datetime, tz = 'Etc/GMT+0')#all GLDAS is in GMT
 
 all_gldas_h$datetime_local = with_tz(all_gldas_h$datetime_gmt,
                                      tz = 'Etc/GMT+6') #NOTE TZ IS INTENTIONALLY INVERTED
@@ -217,7 +210,6 @@ fiveday$mean_wind_5 = roll_mean(x  = gldas_daily$mean_wind, align = 'right', 5)
 fiveday$min_wind_5 = roll_min(x  = gldas_daily$min_wind, align = 'right', 5)
 ```
 
-
 ```{r}
 ggplot(fiveday, aes(x = max_wind_5,
                     y = precip_5)) + 
@@ -232,10 +224,6 @@ ggplot(fiveday, aes(x = solrad_5,
 
 
 ```
-
-
-
-
 
 ## Join GLDAS summaries and export
 
