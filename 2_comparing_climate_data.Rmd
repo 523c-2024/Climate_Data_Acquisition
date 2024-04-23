@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(lubridate)
 library(RcppRoll)
+library(sf)
 
 gldas_dir = 'data/GLDAS/'
 
@@ -36,9 +37,88 @@ dating back to 2004.
 
 ```{r}
 site_info <- tibble(site_no = '09244490',
-                    lat = 40.5180278,
-                    long = -107.3997838,
+                    lat = "40.5180278",
+                    long = "-107.3997838",
                     name = 'Yampa_hayden')
+
+#set parameters of function - these are found on the data rods website linked above
+gldas_mod = "GLDAS_NOAH025_3H_v2.1"
+params = c('Wind_f_inst', 'Rainf_f_tavg') # shortened param list to only two
+
+#time period of interest - v 2.1 only because time range is 2004 - present
+start_date_2.1 = '2004-01-01'
+end_date_2.1 = '2023-04-18'
+
+#function to make wwws to ping - 2.1 only
+make_www_2.1 = function(model, var){ # s_d, e_d are inputs
+  s_d = start_date_2.1
+  e_d = end_date_2.1
+  paste0('https://hydro1.gesdisc.eosdis.nasa.gov/daac-bin/access/timeseries.cgi?variable=GLDAS2:', model, ':', var, '&startDate=', s_d, 'T00:00&endDate=', e_d, 'T21:00&location=GEOM:POINT(', site_info$long, ',%20', site_info$lat, ')&type=asc2')
+}
+
+#make a list of all wwws for download - 2.1 only
+v2.1_www = unlist(map2(rep(gldas_mod, times = length(params)), params, make_www_2.1))
+
+# for loop to download data - v 2.1 only
+for(w21 in 1:length(v2.1_www)) {
+  download.file(url = v2.1_www[w21], destfile = file.path(gldas_dir, paste0(rep(gldas_mod, length(params))[w21], '_', params[w21], '.csv')))
+}
+
+#make list of files fo GLDAS data
+files = list.files(gldas_dir)
+
+formatGLDAS = function(file = files[1]){
+  f = read.delim(file.path(gldas_dir, file), skip = 12, sep = '\t')
+  colnames(f) = 'data'
+  f = f %>%
+    rownames_to_column('datetime') %>% 
+    mutate(data = as.character(data),
+           datetime = as.character(datetime),
+           parameter = unlist(str_split(file, pattern = '_'))[5],
+           version = unlist(str_split(file, pattern = '_'))[4])
+  return(f)
+}
+
+# read in downloaded data
+all_gldas <- map_dfr(files, formatGLDAS) %>% 
+  mutate(datetime_gmt = as.POSIXct(datetime, tz = 'Etc/GMT+0'),
+         data = as.numeric(data)) %>%
+  arrange(datetime_gmt)
+
+# pivot downloaded data to horizontal
+all_gldas_h <- all_gldas %>% 
+  group_by(datetime, parameter) %>% 
+  summarise(aggrate_data = mean(data)) %>% 
+  pivot_wider(names_from = c('parameter'),
+              values_from = 'aggrate_data')
+
+# correct time and combine to daily data
+all_gldas_h$datetime_gmt <- as.POSIXct(all_gldas_h$datetime, 
+                                      tz = 'Etc/GMT+0')#all GLDAS is in GMT
+
+all_gldas_h$datetime_local <- with_tz(all_gldas_h$datetime_gmt,
+                                     tz = 'Etc/GMT+6') #NOTE TZ IS INTENTIONALLY INVERTED
+
+all_gldas_h$date <- as.Date(all_gldas_h$datetime_local)
+
+#summarize to daily data - limited to rain and wind data I loaded
+gldas_daily <- all_gldas_h %>% 
+  group_by(date) %>% 
+  summarise(precip = sum(Rainf),
+            max_wind = max(Wind),
+            mean_wind = mean(Wind),
+            min_wind = min(Wind)) %>% 
+  rowid_to_column() %>%
+  arrange(date)
+
+
+# the data is downloaded and saved as a dataframe and can be visualized as needed.
+
+# here's a basic plot of max wind by day, idk why but it's getting windier
+gldas_daily %>% 
+  ggplot(aes(x = date, y = max_wind)) +
+  geom_point()
+
 ```
 
 
@@ -49,6 +129,23 @@ Using climate engine, download the two same parameters but for the watershed.
 The watershed is stored as a .geojson in the yampa folder. Note, you likely need
 to convert the watershed to a ".shp" file before getting the data from climate 
 engine. 
+#### the watershed stored in the yampa folder is a streamstats output, so it has two shapefiles: a watershed outline and pt. 
+#### grab only the watershed outline, not the point.
+
+```{r}
+# read in geojson, and look at structure with str() in console
+yampa_raw <- st_read("data/yampa/yampa.geojson")
+
+# remove point shapefile
+yampa_watershed <- yampa_raw[2,] %>%  # select only the second row
+  st_transform(2163)
+
+# convert yampa watershed into a shapefile
+st_write(yampa_watershed, "data/yampa/yampa_watershed.shp", append = F)
+# append = F bc we want to overwrite any exsiting file. see help page for more info
+
+
+```
 
 
 ## Compare your climate data anyway you want
